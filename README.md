@@ -11,6 +11,10 @@
 - 新增 / 編輯 / 刪除 ICD、版次、往來文件（依角色）
 - 往來文件總表、使用者角色管理
 
+## 多專案
+側邊欄可切換專案、新增專案（編輯者以上）、專案設定（改名；刪除僅管理者，需輸入代號確認）。每個專案有自己的 ICD、版次、往來文件與代碼表；「本標代碼」（如 YT1、YT2）用來判斷主導/從屬方向。目前所有已核准使用者可看到所有專案。
+既有資料庫請執行 `supabase/migrate_multi_project.sql` 升級（現有資料歸入 YT01）。
+
 ## 部署步驟
 ### 1. Supabase
 1. 建立專案。SQL Editor 依序執行：`supabase/schema.sql` → `seed_1_icds.sql` → `seed_2_revisions_correspondence.sql` → `seed_3_enable_audit.sql`

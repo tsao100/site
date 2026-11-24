@@ -47,11 +47,12 @@
 <!-- 主應用（登入且已核准後才會顯示） -->
 <div id="app" class="app hidden">
   <aside class="side">
-    <div class="brand"><span class="logo">ICD</span><div><h1>界面管理系統</h1><p>高雄黃線 YT01</p></div></div>
+    <div class="brand"><span class="logo">ICD</span><div><h1>界面管理系統</h1><p id="brand-sub"></p></div></div>
+    <div class="proj"><label>專案<select id="project-select"></select></label><div class="proj-btns"><button class="btn small" id="btn-proj-new">＋ 新增專案</button><button class="btn small" id="btn-proj-edit">⚙ 專案設定</button></div></div>
     <nav id="nav">
       <a href="#/dashboard" data-route="dashboard">總覽儀表板</a>
-      <a href="#/icds/ext_led" data-route="icds" data-cat="ext_led">外部 ICD · YT 主導</a>
-      <a href="#/icds/ext_party" data-route="icds" data-cat="ext_party">外部 ICD · YT 從屬</a>
+      <a href="#/icds/ext_led" data-route="icds" data-cat="ext_led">外部 ICD · 本標主導</a>
+      <a href="#/icds/ext_party" data-route="icds" data-cat="ext_party">外部 ICD · 本標從屬</a>
       <a href="#/icds/internal" data-route="icds" data-cat="internal">內部 ICD</a>
       <a href="#/log" data-route="log">往來文件紀錄</a>
       <a href="#/admin" data-route="admin" id="nav-admin" class="hidden">使用者管理</a>

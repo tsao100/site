@@ -33,22 +33,50 @@ returns text language sql stable security definer set search_path = public as $$
   select coalesce((select role from public.profiles where id = auth.uid()), 'none')
 $$;
 
+-- ---------- 專案 ----------
+create table if not exists public.projects (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique,
+  name text not null,
+  my_code text not null,
+  description text,
+  created_at timestamptz not null default now(),
+  created_by text
+);
+insert into public.projects(code, name, my_code)
+select 'YT01', '高雄都會區大眾捷運系統都會線(黃線) YT01標軌道統包工程', 'YT1'
+where not exists (select 1 from public.projects);
+
+create or replace function public.set_default_project()
+returns trigger language plpgsql as $$
+begin
+  if new.project_id is null then
+    new.project_id := (select id from public.projects order by created_at limit 1);
+  end if;
+  return new;
+end $$;
+
 -- ---------- 代碼表 ----------
 create table if not exists public.party_codes (
-  code text primary key,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  code text,
   name_zh text,
   name_en text,
-  kind text check (kind in ('internal','external'))
+  kind text check (kind in ('internal','external')),
+  primary key (project_id, code)
 );
+drop trigger if exists party_codes_default_project on public.party_codes;
+create trigger party_codes_default_project before insert on public.party_codes for each row execute function public.set_default_project();
 
 -- ---------- ICD 主表 ----------
 create table if not exists public.icds (
   id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
   category text not null check (category in ('ext_led','ext_party','internal')),
   item_no int,
   leader text,
   party text,
-  code text not null unique,
+  code text not null,
   revision text,
   title text,
   description text,
@@ -74,8 +102,11 @@ create table if not exists public.icds (
   expected_reply_date date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  updated_by text
+  updated_by text,
+  unique (project_id, code)
 );
+drop trigger if exists icds_default_project on public.icds;
+create trigger icds_default_project before insert on public.icds for each row execute function public.set_default_project();
 create index if not exists icds_category_idx on public.icds(category);
 create index if not exists icds_status_idx on public.icds(status);
 
@@ -151,6 +182,7 @@ end $$;
 
 -- ---------- Row Level Security ----------
 alter table public.profiles          enable row level security;
+alter table public.projects          enable row level security;
 alter table public.party_codes       enable row level security;
 alter table public.icds              enable row level security;
 alter table public.icd_revisions     enable row level security;
@@ -172,7 +204,7 @@ create policy profiles_delete on public.profiles for delete to authenticated
 do $$
 declare t text;
 begin
-  foreach t in array array['party_codes','icds','icd_revisions','icd_correspondence'] loop
+  foreach t in array array['projects','party_codes','icds','icd_revisions','icd_correspondence'] loop
     execute format('drop policy if exists %I on public.%I', t||'_select', t);
     execute format('create policy %I on public.%I for select to authenticated using (public.app_role() in (''viewer'',''editor'',''admin''))', t||'_select', t);
     execute format('drop policy if exists %I on public.%I', t||'_insert', t);
@@ -181,6 +213,9 @@ begin
     execute format('create policy %I on public.%I for update to authenticated using (public.app_role() in (''editor'',''admin'')) with check (public.app_role() in (''editor'',''admin''))', t||'_update', t);
   end loop;
 end $$;
+
+drop policy if exists projects_delete on public.projects;
+create policy projects_delete on public.projects for delete to authenticated using (public.app_role() = 'admin');
 
 drop policy if exists icds_delete on public.icds;
 create policy icds_delete on public.icds for delete to authenticated using (public.app_role() = 'admin');
@@ -199,3 +234,9 @@ create policy icd_audit_select on public.icd_audit for select to authenticated
 revoke all on all tables in schema public from anon;
 revoke all on all functions in schema public from anon;
 grant execute on function public.app_role() to authenticated;
+
+-- 明確授權給登入使用者（部分專案不會自動授權；實際存取仍由 RLS 控管）
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on all tables in schema public to authenticated;
+grant usage, select on all sequences in schema public to authenticated;
+alter default privileges in schema public grant select, insert, update, delete on tables to authenticated;

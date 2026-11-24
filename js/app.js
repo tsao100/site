@@ -5,14 +5,14 @@
 // ---------- 常數 ----------
 const STATUSES = ['OPEN', 'IN PROGRESS', 'WAIT SIGN', 'SIGNED', 'FROZEN', 'PENDING'];
 const STATUS_COLOR = { 'OPEN': '#64748b', 'IN PROGRESS': '#d97706', 'WAIT SIGN': '#7c3aed', 'SIGNED': '#15803d', 'FROZEN': '#0e7490', 'PENDING': '#9ca3af' };
-const CATS = { ext_led: '外部 ICD · YT 主導', ext_party: '外部 ICD · YT 從屬', internal: '內部 ICD' };
+const CATS = { ext_led: '外部 ICD · 本標主導', ext_party: '外部 ICD · 本標從屬', internal: '內部 ICD' };
 const ROLES = { pending: '待核准', viewer: '唯讀', editor: '編輯者', admin: '管理者' };
 const REV_ORDER = ['A', 'B', 'C', 'D', 'E', 'F', '0', '0A'];
-const ME = 'YT1'; // 本標代碼
+let ME = 'YT1'; // 本標代碼（隨目前專案的 my_code 變動）
 const ACTIVE = s => s === 'OPEN' || s === 'IN PROGRESS' || s === 'WAIT SIGN';
 
 const FIELDS = [
-  { k: 'category', l: '類別', t: 'select', opts: Object.entries(CATS) },
+  { k: 'category', l: '類別', t: 'select', opts: () => Object.entries(CATS) },
   { k: 'code', l: 'ICD 編碼', t: 'text', req: true },
   { k: 'item_no', l: '項次', t: 'number' },
   { k: 'leader', l: '主導者', t: 'code' },
@@ -64,7 +64,7 @@ const errMsg = e => (e && (e.message || e.error_description)) || String(e);
 
 // ---------- 狀態 ----------
 const S = { sb: null, user: null, profile: null, recovery: false, loadedFor: null,
-  icds: [], revs: [], corr: [], codes: [], filters: {}, sort: {} };
+  all: [], icds: [], revs: [], corr: [], codes: [], projects: [], project: null, filters: {}, sort: {} };
 const canEdit = () => ['editor', 'admin'].includes(S.profile?.role);
 const isAdmin = () => S.profile?.role === 'admin';
 
@@ -92,7 +92,7 @@ function boot() {
 
 async function handleSession(sess) {
   if (S.recovery) return;
-  if (!sess) { S.user = null; S.profile = null; S.loadedFor = null; S.icds = []; S.revs = []; S.corr = []; showOnly('auth-view'); return; }
+  if (!sess) { S.user = null; S.profile = null; S.loadedFor = null; S.all = []; S.icds = []; S.revs = []; S.corr = []; S.projects = []; S.project = null; showOnly('auth-view'); return; }
   if (S.loadedFor === sess.user.id) return;
   S.user = sess.user;
   const { data: p, error } = await S.sb.from('profiles').select('*').eq('id', S.user.id).maybeSingle();
@@ -167,12 +167,30 @@ async function fetchAll(table, orders) {
   return out;
 }
 async function loadAll() {
-  const [icds, revs, corr, codes] = await Promise.all([
+  const [all, revs, corr, codes, projects] = await Promise.all([
     fetchAll('icds', ['category', 'item_no', 'code']), fetchAll('icd_revisions', ['issued_date']),
-    fetchAll('icd_correspondence', ['logged_date']), fetchAll('party_codes', ['code'])]);
-  Object.assign(S, { icds, revs, corr, codes });
+    fetchAll('icd_correspondence', ['logged_date']), fetchAll('party_codes', ['code']), fetchAll('projects', ['created_at'])]);
+  Object.assign(S, { all, revs, corr, codes, projects });
+  let saved = null; try { saved = localStorage.getItem('icd_project'); } catch (_) { /* ignore */ }
+  S.project = projects.find(p => p.id === saved) || projects[0] || null;
+  applyProject();
+}
+// 依目前專案重新計算顯示資料與標籤
+function applyProject() {
+  const p = S.project;
+  S.icds = p ? S.all.filter(i => i.project_id === p.id) : [];
+  ME = p?.my_code || 'YT1';
+  CATS.ext_led = `外部 ICD · ${ME} 主導`; CATS.ext_party = `外部 ICD · ${ME} 從屬`;
+  const a = $('#nav a[data-cat="ext_led"]'), b = $('#nav a[data-cat="ext_party"]');
+  if (a) a.textContent = CATS.ext_led; if (b) b.textContent = CATS.ext_party;
+  const sel = $('#project-select');
+  if (sel) sel.innerHTML = S.projects.map(x => `<option value="${x.id}" ${p && x.id === p.id ? 'selected' : ''}>${esc(x.code)}｜${esc(x.name)}</option>`).join('') || '<option value="">（尚無專案）</option>';
+  $('#brand-sub').textContent = p ? p.code : '';
+  $('#btn-proj-new').classList.toggle('hidden', !canEdit());
+  $('#btn-proj-edit').classList.toggle('hidden', !canEdit() || !p);
 }
 const byId = id => S.icds.find(i => i.id === id);
+const codesOfProject = () => S.codes.filter(c => c.project_id === S.project?.id);
 const revsOf = id => S.revs.filter(r => r.icd_id === id).sort((a, b) => REV_ORDER.indexOf(a.revision) - REV_ORDER.indexOf(b.revision));
 const corrOf = id => S.corr.filter(r => r.icd_id === id).sort((a, b) => (b.logged_date || '').localeCompare(a.logged_date || ''));
 
@@ -186,6 +204,7 @@ function route() {
   $('#page-actions').innerHTML = '';
   $('.side').classList.remove('open');
   const view = $('#view');
+  if (!S.project && p !== 'admin') { $('#page-title').textContent = '尚無專案'; view.innerHTML = `<div class="card"><p>目前沒有任何專案。</p>${canEdit() ? '<button class="btn primary" id="empty-new">＋ 新增專案</button>' : '<p class="muted">請聯絡編輯者或管理者建立專案。</p>'}</div>`; $('#empty-new')?.addEventListener('click', () => openProjectForm(null)); return; }
   if (p === 'dashboard') { $('#page-title').textContent = PAGES.dashboard; viewDashboard(view); }
   else if (p === 'icds') { const cat = CATS[arg] ? arg : 'ext_led'; $('#page-title').textContent = CATS[cat]; viewList(view, cat); }
   else if (p === 'log') { $('#page-title').textContent = PAGES.log; viewLog(view); }
@@ -238,7 +257,7 @@ function viewDashboard(el) {
       <div class="card"><h3>各類別狀態分佈</h3>${bars}<div style="margin-top:10px">${legend}</div></div>
       <div class="card"><h3>最新進版版次分佈</h3>${revBars}</div>
       <div class="card" style="grid-column:1/-1"><h3>外部界面矩陣（O 開啟 · I 進行中 · S 已簽署 · P 待啟動 · F 凍結）</h3>
-        <div class="tbl-wrap"><table class="mx"><thead><tr><th rowspan="2">對口單位</th><th colspan="5" style="border-left:2px solid #dde3ea">YT01 主導</th><th colspan="5" style="border-left:2px solid #dde3ea">對方主導（YT01 從屬）</th><th rowspan="2" style="border-left:2px solid #dde3ea">合計</th></tr><tr>${mxHead}${mxHead}</tr></thead><tbody>${mxRows}</tbody></table></div></div>
+        <div class="tbl-wrap"><table class="mx"><thead><tr><th rowspan="2">對口單位</th><th colspan="5" style="border-left:2px solid #dde3ea">${esc(ME)} 主導</th><th colspan="5" style="border-left:2px solid #dde3ea">對方主導（${esc(ME)} 從屬）</th><th rowspan="2" style="border-left:2px solid #dde3ea">合計</th></tr><tr>${mxHead}${mxHead}</tr></thead><tbody>${mxRows}</tbody></table></div></div>
       <div class="card"><h3>逾期待處理（${overdue.length}）</h3>${list(overdue, i => { const d = dueOf(i); return d ? `${d}<br><span class="tag warn">逾 ${daysBetween(today, parseD(d))} 天</span>` : '<span class="tag warn">逾期回覆</span>'; }, '目前沒有逾期項目 🎉')}</div>
       <div class="card"><h3>90 天內預計完成（${soon.length}）</h3>${list(soon, i => `${i.expected_end}<br><span class="tag">剩 ${daysBetween(parseD(i.expected_end), today)} 天</span>`, '未來 90 天沒有預計完成項目')}</div>
     </div>`;
@@ -375,24 +394,24 @@ const inputFor = (f, v) => {
   if (f.t === 'date') return `<input type="date" ${n} value="${esc(val)}">`;
   if (f.t === 'number') return `<input type="number" ${n} value="${esc(val)}">`;
   if (f.t === 'code') return `<input ${n} list="dl-codes" value="${esc(val)}">`;
-  if (f.t === 'select') return `<select ${n}>${f.blank ? '<option value=""></option>' : ''}${f.opts.map(([k, l]) => `<option value="${esc(k)}" ${k === val ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+  if (f.t === 'select') return `<select ${n}>${f.blank ? '<option value=""></option>' : ''}${(typeof f.opts === 'function' ? f.opts() : f.opts).map(([k, l]) => `<option value="${esc(k)}" ${k === val ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
   return `<input ${n} value="${esc(val)}" ${f.req ? 'required' : ''}>`;
 };
 const readForm = (form, fields) => { const o = {}; fields.forEach(f => { let v = form.elements[f.k]?.value ?? ''; v = v.trim(); o[f.k] = v === '' ? null : (f.t === 'number' ? Number(v) : v); }); return o; };
 
 function openIcdForm(id, cat) {
-  const i = id ? byId(id) : { category: cat || 'ext_led', leader: 'YT1', status: 'OPEN' };
+  const i = id ? byId(id) : { category: cat || 'ext_led', leader: ME, status: 'OPEN' };
   openModal(`<h3 style="margin-bottom:14px">${id ? '編輯 ICD · ' + esc(i.code) : '新增 ICD'}</h3>
-    <datalist id="dl-codes">${S.codes.map(c => `<option value="${esc(c.code)}">${esc(c.name_zh ?? '')}</option>`).join('')}</datalist>
+    <datalist id="dl-codes">${codesOfProject().map(c => `<option value="${esc(c.code)}">${esc(c.name_zh ?? '')}</option>`).join('')}</datalist>
     <form id="icd-form"><div class="form">${FIELDS.map(f => `<label class="${f.full || f.t === 'area' ? 'full' : ''}">${f.l}${inputFor(f, i[f.k])}</label>`).join('')}</div>
     <div id="form-msg" class="msg err"></div><div class="form-actions"><button type="button" class="btn" data-act="close-modal">取消</button><button class="btn primary" type="submit">儲存</button></div></form>`);
   $('#icd-form').onsubmit = async e => {
     e.preventDefault();
     const payload = readForm(e.target, FIELDS);
-    const q = id ? S.sb.from('icds').update(payload).eq('id', id) : S.sb.from('icds').insert(payload);
+    const q = id ? S.sb.from('icds').update(payload).eq('id', id) : S.sb.from('icds').insert({ ...payload, project_id: S.project.id });
     const { data, error } = await q.select().single();
-    if (error) return setMsg('#form-msg', error.code === '23505' ? 'ICD 編碼已存在' : errMsg(error), 'err');
-    const idx = S.icds.findIndex(x => x.id === data.id); idx >= 0 ? S.icds[idx] = data : S.icds.push(data);
+    if (error) return setMsg('#form-msg', error.code === '23505' ? '此專案內 ICD 編碼已存在' : errMsg(error), 'err');
+    const idx = S.all.findIndex(x => x.id === data.id); idx >= 0 ? S.all[idx] = data : S.all.push(data); applyProject();
     closeModal(); toast('已儲存'); route(); if (S.openId === data.id || !id) openDrawer(data.id);
   };
 }
@@ -415,6 +434,36 @@ function openSubForm(kind, icdId, row) {
   };
 }
 
+// ---------- 專案 ----------
+function switchProject(id) {
+  const p = S.projects.find(x => x.id === id); if (!p) return;
+  S.project = p; try { localStorage.setItem('icd_project', id); } catch (_) { /* ignore */ }
+  S.filters = {}; S.sort = {}; closeDrawer(); applyProject(); route();
+}
+function openProjectForm(id) {
+  const p = id ? S.projects.find(x => x.id === id) : { code: '', name: '', my_code: '', description: '' };
+  openModal(`<h3 style="margin-bottom:14px">${id ? '編輯專案 · ' + esc(p.code) : '新增專案'}</h3>
+    <form id="proj-form"><div class="form">
+      <label>專案代號<input name="code" required value="${esc(p.code)}" placeholder="例如 YT02"></label>
+      <label>本標在 ICD 編碼中的代號<input name="my_code" required value="${esc(p.my_code)}" placeholder="例如 YT2（用來判斷主導/從屬方向）"></label>
+      <label class="full">專案名稱<input name="name" required value="${esc(p.name)}"></label>
+      <label class="full">說明<textarea name="description">${esc(p.description ?? '')}</textarea></label>
+    </div><div id="form-msg" class="msg err"></div>
+    <div class="form-actions">${id && isAdmin() ? '<button type="button" class="btn danger" data-act="del-project" style="margin-right:auto">刪除專案</button>' : ''}<button type="button" class="btn" data-act="close-modal">取消</button><button class="btn primary" type="submit">儲存</button></div></form>`);
+  $('#proj-form').onsubmit = async e => {
+    e.preventDefault();
+    const f = e.target.elements, payload = { code: f.code.value.trim(), my_code: f.my_code.value.trim(), name: f.name.value.trim(), description: f.description.value.trim() || null };
+    const q = id ? S.sb.from('projects').update(payload).eq('id', id) : S.sb.from('projects').insert({ ...payload, created_by: S.profile.email });
+    const { data, error } = await q.select().single();
+    if (error) return setMsg('#form-msg', error.code === '23505' ? '專案代號已存在' : errMsg(error), 'err');
+    const idx = S.projects.findIndex(x => x.id === data.id); idx >= 0 ? S.projects[idx] = data : S.projects.push(data);
+    closeModal(); toast(id ? '專案已更新' : '專案已建立'); switchProject(data.id);
+  };
+}
+$('#project-select').addEventListener('change', e => switchProject(e.target.value));
+$('#btn-proj-new').addEventListener('click', () => openProjectForm(null));
+$('#btn-proj-edit').addEventListener('click', () => S.project && openProjectForm(S.project.id));
+
 // ---------- 全域事件委派 ----------
 document.addEventListener('click', async e => {
   const open = e.target.closest('[data-open]');
@@ -424,6 +473,15 @@ document.addEventListener('click', async e => {
   if (act === 'close') return closeDrawer();
   if (act === 'close-modal') return closeModal();
   if (!canEdit()) return;
+  if (act === 'del-project' && isAdmin()) {
+    const p = S.project; const typed = prompt(`將刪除專案「${p.code}」及其所有 ICD、版次與往來紀錄，無法復原。\n請輸入專案代號 ${p.code} 以確認：`);
+    if (typed !== p.code) return;
+    const { error } = await S.sb.from('projects').delete().eq('id', p.id);
+    if (error) return toast('刪除失敗：' + errMsg(error), true);
+    S.projects = S.projects.filter(x => x.id !== p.id); const delIds = new Set(S.all.filter(i => i.project_id === p.id).map(i => i.id));
+    S.all = S.all.filter(i => i.project_id !== p.id); S.revs = S.revs.filter(r => !delIds.has(r.icd_id)); S.corr = S.corr.filter(r => !delIds.has(r.icd_id));
+    S.project = S.projects[0] || null; closeModal(); toast('專案已刪除'); applyProject(); route(); return;
+  }
   if (act === 'edit') return openIcdForm(id);
   if (act === 'add-rev') return openSubForm('rev', id, null);
   if (act === 'edit-rev') return openSubForm('rev', id, S.revs.find(r => r.id === rid));
@@ -439,7 +497,7 @@ document.addEventListener('click', async e => {
     const i = byId(id); if (!confirm(`確定刪除 ${i.code}？其版次與往來紀錄也會一併刪除，且無法復原。`)) return;
     const { error } = await S.sb.from('icds').delete().eq('id', id);
     if (error) return toast('刪除失敗：' + errMsg(error), true);
-    S.icds = S.icds.filter(x => x.id !== id); S.revs = S.revs.filter(r => r.icd_id !== id); S.corr = S.corr.filter(r => r.icd_id !== id);
+    S.all = S.all.filter(x => x.id !== id); applyProject(); S.revs = S.revs.filter(r => r.icd_id !== id); S.corr = S.corr.filter(r => r.icd_id !== id);
     closeDrawer(); toast('已刪除'); route();
   }
 });

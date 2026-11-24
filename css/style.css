@@ -68,3 +68,5 @@ td.num,th.num{text-align:center}.code{font-family:ui-monospace,Menlo,Consolas,mo
 .audit{font-size:12px;color:var(--mut)}.audit li{margin:3px 0}
 @media(max-width:860px){.app{grid-template-columns:1fr}.side{position:fixed;z-index:15;left:0;width:260px;transform:translateX(-100%);transition:.2s}.side.open{transform:none}.menu-btn{display:inline-block}.view{padding:14px}.dl{grid-template-columns:1fr}.g-2{grid-template-columns:1fr}}
 @media print{.side,.topbar .btn,.toolbar{display:none}.app{display:block}}
+
+.proj{display:flex;flex-direction:column;gap:8px}.proj label{color:#8fa9c4}.proj select{background:#12406e;color:#fff;border-color:#3b5f85;font-size:12px}.proj-btns{display:flex;gap:6px;flex-wrap:wrap}.proj .btn{background:transparent;color:#dbe7f3;border-color:#3b5f85}
