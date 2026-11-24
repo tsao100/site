@@ -418,19 +418,72 @@ function openIcdForm(id, cat) {
 
 const REV_F = [{ k: 'revision', l: '版次（A/B/C/D/E/F/0/0A）', t: 'text', req: true }, { k: 'issued_date', l: '發起日期', t: 'date' }, { k: 'reply_date', l: '從屬方回覆日期', t: 'date' }, { k: 'note', l: '備註', t: 'area', full: true }];
 const CORR_F = [{ k: 'logged_date', l: '日期', t: 'date' }, { k: 'direction', l: '往來方向（主導-從屬）', t: 'text' }, { k: 'revision', l: '版次', t: 'text' }, { k: 'doc_ref', l: '發文文號 / 連結', t: 'text' }, { k: 'remark', l: '備註', t: 'area', full: true }, { k: 'reply_date', l: '從屬方回覆日期', t: 'date' }, { k: 'reply_doc_ref', l: '回覆文號 / 連結', t: 'text' }, { k: 'reply_remark', l: '回覆備註', t: 'area', full: true }];
+const fmtD = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const addDays = (s, n) => { const d = parseD(s); d.setDate(d.getDate() + n); return fmtD(d); };
+// 依往來文件建議 ICD 狀態：0/0A 版已回覆＝SIGNED；0/0A 版送出未回覆＝WAIT SIGN；其餘版次（A~F）往來＝IN PROGRESS
+function suggestStatus(cur, rev, reply) {
+  if (!rev) return cur || '';
+  if (['0', '0A'].includes(rev)) return reply ? 'SIGNED' : 'WAIT SIGN';
+  return 'IN PROGRESS';
+}
+// 依全部往來文件重算 ICD 的版次/回覆欄位（newStatus 為空字串＝不變更狀態），並同步版次紀錄
+async function syncIcdFromCorr(icdId, newStatus, touched) {
+  const i = byId(icdId); if (!i) return;
+  if (touched?.revision) { // 同步 icd_revisions
+    const ex = S.revs.find(r => r.icd_id === icdId && r.revision === touched.revision);
+    const pl = { issued_date: touched.logged_date, reply_date: touched.reply_date };
+    const { data, error } = ex ? await S.sb.from('icd_revisions').update(pl).eq('id', ex.id).select().single()
+      : await S.sb.from('icd_revisions').insert({ ...pl, icd_id: icdId, revision: touched.revision }).select().single();
+    if (error) throw error;
+    const k = S.revs.findIndex(r => r.id === data.id); k >= 0 ? S.revs[k] = data : S.revs.push(data);
+  }
+  let best = null;
+  corrOf(icdId).forEach(c => { const k = REV_ORDER.indexOf(c.revision); if (k < 0) return; if (!best || k > best.k || (k === best.k && (c.logged_date || '') > (best.c.logged_date || ''))) best = { k, c }; });
+  const patch = {};
+  if (best) {
+    const c = best.c; patch.revision = c.revision; patch.latest_revision = c.revision; patch.latest_revision_date = c.logged_date;
+    patch.expected_reply_date = c.reply_date ? i.expected_reply_date : (c.logged_date ? addDays(c.logged_date, 30) : i.expected_reply_date);
+    patch.reply_status = c.reply_date ? '已回覆' : (patch.expected_reply_date && parseD(patch.expected_reply_date) < today ? '逾期回覆' : '未回覆');
+    if (newStatus === 'SIGNED' && !i.signed_date) patch.signed_date = c.reply_date || fmtD(today);
+  }
+  if (newStatus && newStatus !== i.status) patch.status = newStatus;
+  if (!Object.keys(patch).length) return;
+  const { data, error } = await S.sb.from('icds').update(patch).eq('id', icdId).select().single();
+  if (error) throw error;
+  const k = S.all.findIndex(x => x.id === icdId); if (k >= 0) S.all[k] = data; applyProject();
+}
+
 function openSubForm(kind, icdId, row) {
   const isRev = kind === 'rev', F = isRev ? REV_F : CORR_F, table = isRev ? 'icd_revisions' : 'icd_correspondence', key = isRev ? 'revs' : 'corr';
-  openModal(`<h3 style="margin-bottom:14px">${row ? '編輯' : '新增'}${isRev ? '版次紀錄' : '往來文件'} · ${esc(byId(icdId).code)}</h3>
-    <form id="sub-form"><div class="form">${F.map(f => `<label class="${f.full ? 'full' : ''}">${f.l}${inputFor(f, row?.[f.k])}</label>`).join('')}</div>
+  const icd = byId(icdId);
+  const statusBox = isRev ? '' : `<label class="full">更新 ICD 狀態（目前：${esc(icd.status ?? '—')}）
+      <select name="new_status"><option value="">（不變更）</option>${STATUSES.map(s => `<option value="${s}">${s}</option>`).join('')}</select>
+      <span class="muted" style="font-weight:400" id="status-hint"></span></label>`;
+  openModal(`<h3 style="margin-bottom:14px">${row ? '編輯' : '新增'}${isRev ? '版次紀錄' : '往來文件'} · ${esc(icd.code)}</h3>
+    <form id="sub-form"><div class="form">${F.map(f => `<label class="${f.full ? 'full' : ''}">${f.l}${inputFor(f, row?.[f.k])}</label>`).join('')}${statusBox}</div>
     <div id="form-msg" class="msg err"></div><div class="form-actions"><button type="button" class="btn" data-act="close-modal">取消</button><button class="btn primary" type="submit">儲存</button></div></form>`);
-  $('#sub-form').onsubmit = async e => {
+  const form = $('#sub-form');
+  if (!isRev) {
+    const sel = form.elements.new_status; let manual = false;
+    const refresh = () => {
+      const sug = suggestStatus(icd.status, form.elements.revision.value.trim(), form.elements.reply_date.value);
+      $('#status-hint').textContent = sug && sug !== icd.status ? `建議：${sug}（依版次與回覆日判斷）。儲存後也會更新最新版次、回覆狀態與預計回覆日。` : '儲存後會依往來文件更新最新版次、回覆狀態與預計回覆日。';
+      if (!manual) sel.value = sug && sug !== icd.status ? sug : '';
+    };
+    sel.addEventListener('change', () => { manual = true; });
+    form.elements.revision.addEventListener('input', refresh); form.elements.reply_date.addEventListener('change', refresh);
+    refresh();
+  }
+  form.onsubmit = async e => {
     e.preventDefault();
-    const payload = readForm(e.target, F);
+    const payload = readForm(form, F);
     const q = row ? S.sb.from(table).update(payload).eq('id', row.id) : S.sb.from(table).insert({ ...payload, icd_id: icdId });
     const { data, error } = await q.select().single();
     if (error) return setMsg('#form-msg', errMsg(error), 'err');
     const idx = S[key].findIndex(x => x.id === data.id); idx >= 0 ? S[key][idx] = data : S[key].push(data);
-    closeModal(); toast('已儲存'); openDrawer(icdId);
+    try { if (!isRev) await syncIcdFromCorr(icdId, form.elements.new_status.value, data); }
+    catch (er) { toast('往來文件已儲存，但同步 ICD 狀態失敗：' + errMsg(er), true); }
+    closeModal(); toast('已儲存'); route(); openDrawer(icdId);
   };
 }
 
@@ -491,7 +544,9 @@ document.addEventListener('click', async e => {
     if (!confirm('確定刪除此筆紀錄？')) return;
     const rev = act === 'del-rev', { error } = await S.sb.from(rev ? 'icd_revisions' : 'icd_correspondence').delete().eq('id', rid);
     if (error) return toast('刪除失敗：' + errMsg(error), true);
-    S[rev ? 'revs' : 'corr'] = S[rev ? 'revs' : 'corr'].filter(r => r.id !== rid); toast('已刪除'); return openDrawer(id);
+    S[rev ? 'revs' : 'corr'] = S[rev ? 'revs' : 'corr'].filter(r => r.id !== rid);
+    if (!rev) { try { await syncIcdFromCorr(id, '', null); } catch (er) { toast('同步 ICD 失敗：' + errMsg(er), true); } }
+    toast('已刪除'); route(); return openDrawer(id);
   }
   if (act === 'del' && isAdmin()) {
     const i = byId(id); if (!confirm(`確定刪除 ${i.code}？其版次與往來紀錄也會一併刪除，且無法復原。`)) return;
