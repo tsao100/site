@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>界面管理系統 | ICD Management</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- 登入畫面：未登入時只顯示這一塊，應用程式內容不會渲染 -->
+<main id="auth-view" class="auth hidden">
+  <form id="auth-form" class="auth-card" autocomplete="on">
+    <div class="brand"><span class="logo">ICD</span><div><h1>界面管理系統</h1><p>Interface Control Document Management</p></div></div>
+    <h2 id="auth-title">登入</h2>
+    <label>電子郵件<input id="auth-email" type="email" required autocomplete="username"></label>
+    <label id="auth-pw-wrap">密碼<input id="auth-pw" type="password" minlength="8" required autocomplete="current-password"></label>
+    <div id="auth-msg" class="msg" role="alert"></div>
+    <button id="auth-submit" class="btn primary block" type="submit">登入</button>
+    <div class="auth-links">
+      <a href="#" id="link-register">申請帳號</a>
+      <a href="#" id="link-forgot">忘記密碼</a>
+    </div>
+  </form>
+</main>
+
+<!-- 待核准 / 設定新密碼 -->
+<main id="pending-view" class="auth hidden">
+  <div class="auth-card">
+    <div class="brand"><span class="logo">ICD</span><div><h1>界面管理系統</h1></div></div>
+    <h2>帳號待核准</h2>
+    <p>你的帳號已建立，但尚未獲得使用權限。請聯絡系統管理者核准後，重新整理頁面。</p>
+    <p class="muted" id="pending-email"></p>
+    <button class="btn block" id="pending-logout">登出</button>
+  </div>
+</main>
+<main id="recovery-view" class="auth hidden">
+  <form id="recovery-form" class="auth-card">
+    <h2>設定新密碼</h2>
+    <label>新密碼（至少 8 碼）<input id="recovery-pw" type="password" minlength="8" required autocomplete="new-password"></label>
+    <div id="recovery-msg" class="msg"></div>
+    <button class="btn primary block" type="submit">更新密碼</button>
+  </form>
+</main>
+
+<!-- 主應用（登入且已核准後才會顯示） -->
+<div id="app" class="app hidden">
+  <aside class="side">
+    <div class="brand"><span class="logo">ICD</span><div><h1>界面管理系統</h1><p>高雄黃線 YT01</p></div></div>
+    <nav id="nav">
+      <a href="#/dashboard" data-route="dashboard">總覽儀表板</a>
+      <a href="#/icds/ext_led" data-route="icds" data-cat="ext_led">外部 ICD · YT 主導</a>
+      <a href="#/icds/ext_party" data-route="icds" data-cat="ext_party">外部 ICD · YT 從屬</a>
+      <a href="#/icds/internal" data-route="icds" data-cat="internal">內部 ICD</a>
+      <a href="#/log" data-route="log">往來文件紀錄</a>
+      <a href="#/admin" data-route="admin" id="nav-admin" class="hidden">使用者管理</a>
+    </nav>
+    <div class="side-foot">
+      <div id="whoami"></div>
+      <button class="btn small" id="btn-logout">登出</button>
+    </div>
+  </aside>
+  <section class="main">
+    <header class="topbar"><button class="btn small menu-btn" id="btn-menu">☰</button><h2 id="page-title"></h2><div id="page-actions"></div></header>
+    <div id="view" class="view"></div>
+  </section>
+</div>
+
+<div id="drawer-mask" class="mask hidden"></div>
+<aside id="drawer" class="drawer hidden" aria-live="polite"></aside>
+<div id="modal-mask" class="mask hidden"></div>
+<div id="modal" class="modal hidden"></div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
