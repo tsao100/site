@@ -64,7 +64,7 @@ const errMsg = e => (e && (e.message || e.error_description)) || String(e);
 
 // ---------- 狀態 ----------
 const S = { sb: null, user: null, profile: null, recovery: false, loadedFor: null,
-  all: [], icds: [], revs: [], corr: [], codes: [], projects: [], project: null, filters: {}, sort: {} };
+  all: [], icds: [], revs: [], corr: [], codes: [], projects: [], project: null, filters: {}, sort: {}, pieMode: 'status' };
 const canEdit = () => ['editor', 'admin'].includes(S.profile?.role);
 const isAdmin = () => S.profile?.role === 'admin';
 
@@ -214,6 +214,31 @@ function route() {
 window.addEventListener('hashchange', route);
 $('#btn-menu').addEventListener('click', () => $('.side').classList.toggle('open'));
 
+// ---------- 圓餅圖（純 SVG，不需外部套件） ----------
+const PIE_PALETTE = ['#0b5cab', '#d97706', '#15803d', '#7c3aed', '#0e7490', '#c62828', '#b45309', '#4d7c0f', '#be185d', '#475569', '#0369a1', '#a16207'];
+function pieSVG(slices, size = 120) {
+  const live = slices.filter(x => x.n > 0), tot = live.reduce((a, x) => a + x.n, 0), c = size / 2, r = c - 2;
+  const pct = n => (n / tot * 100).toFixed(1).replace(/\.0$/, '');
+  let body;
+  if (!tot) body = `<circle cx="${c}" cy="${c}" r="${r}" fill="#edf1f5"/>`;
+  else if (live.length === 1) body = `<circle cx="${c}" cy="${c}" r="${r}" fill="${live[0].color}"><title>${esc(live[0].label)}: ${live[0].n} (100%)</title></circle>`;
+  else {
+    let a0 = -Math.PI / 2;
+    body = live.map(x => {
+      const a1 = a0 + x.n / tot * Math.PI * 2, f = v => v.toFixed(2);
+      const d = `M${c} ${c}L${f(c + r * Math.cos(a0))} ${f(c + r * Math.sin(a0))}A${r} ${r} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${f(c + r * Math.cos(a1))} ${f(c + r * Math.sin(a1))}Z`;
+      a0 = a1;
+      return `<path d="${d}" fill="${x.color}" stroke="#fff" stroke-width="1.5"><title>${esc(x.label)}: ${x.n} (${pct(x.n)}%)</title></path>`;
+    }).join('');
+  }
+  return `<svg class="pie" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img">${body}</svg>`;
+}
+function pieLegend(slices) {
+  const tot = slices.reduce((a, x) => a + x.n, 0) || 1;
+  return `<ul class="pie-legend">${slices.filter(x => x.n > 0).map(x =>
+    `<li style="--c:${x.color}"><i></i><span>${esc(x.label)}</span><b>${x.n}</b><span class="p">${(x.n / tot * 100).toFixed(0)}%</span></li>`).join('')}</ul>`;
+}
+
 // ---------- 總覽 ----------
 function viewDashboard(el) {
   const all = S.icds, cnt = s => all.filter(i => i.status === s).length;
@@ -242,6 +267,44 @@ function viewDashboard(el) {
   }).join('');
   const mxHead = col.map(([l]) => `<th>${l}</th>`).join('');
 
+  // 各對口單位圓餅圖：(1) 各單位 ICD 數量佔比 (2) 每個單位自己的分佈，可切換依「狀態／主導從屬／版次」
+  const pRows = Object.fromEntries(partners.map(p => [p, all.filter(i => i.category !== 'internal' && partnerOf(i) === p)]));
+  const pOrder = [...partners].sort((a, b) => pRows[b].length - pRows[a].length || a.localeCompare(b));
+  const shareSlices = pOrder.map((p, k) => ({ label: p, n: pRows[p].length, color: PIE_PALETTE[k % PIE_PALETTE.length] }));
+  const PIE_MODES = { status: '狀態', dir: '主導／從屬', rev: '版次' };
+  const PIE_NOTE = { status: '各對口單位狀態分佈（主導＋從屬合計）', dir: `各對口單位主導／從屬比例（${ME} 主導 vs 對方主導）`, rev: '各對口單位最新進版版次分佈（主導＋從屬合計）' };
+  const NA_COLOR = '#d5dbe2';
+  const extAll = all.filter(i => i.category !== 'internal');
+  const pri = k => { const x = REV_ORDER.indexOf(k); return x < 0 ? 99 : x; };
+  const pRevKeys = [...new Set(extAll.map(i => i.latest_revision).filter(v => v != null && v !== ''))].sort((x, y) => pri(x) - pri(y) || String(x).localeCompare(String(y)));
+  const pRevColor = Object.fromEntries(pRevKeys.map((k, n) => [k, PIE_PALETTE[n % PIE_PALETTE.length]]));
+  const tileSlices = (rows, mode) => {
+    if (mode === 'dir') return [
+      { label: `${ME} 主導`, n: rows.filter(i => i.category === 'ext_led').length, color: '#0b5cab' },
+      { label: `對方主導（${ME} 從屬）`, n: rows.filter(i => i.category === 'ext_party').length, color: '#be185d' }];
+    if (mode === 'rev') {
+      const sl = pRevKeys.map(k => ({ label: REV_ORDER.includes(k) ? `${k} 版` : String(k), n: rows.filter(i => i.latest_revision === k).length, color: pRevColor[k] }));
+      const none = rows.filter(i => i.latest_revision == null || i.latest_revision === '').length;
+      if (none) sl.push({ label: '尚無進版', n: none, color: NA_COLOR });
+      return sl;
+    }
+    const sl = STATUSES.map(s => ({ label: s, n: rows.filter(i => i.status === s).length, color: STATUS_COLOR[s] }));
+    const other = rows.filter(i => !STATUSES.includes(i.status)).length;
+    if (other) sl.push({ label: '未設定', n: other, color: NA_COLOR });
+    return sl;
+  };
+  const pieTiles = mode => pOrder.map(p => {
+    const rows = pRows[p], sl = tileSlices(rows, mode);
+    return `<div class="pie-card"><h4><span>${esc(p)}</span><span class="muted">${rows.length} 筆</span></h4>${pieSVG(sl)}${pieLegend(sl)}</div>`;
+  }).join('');
+  if (!PIE_MODES[S.pieMode]) S.pieMode = 'status';
+  const piesCard = pOrder.length ? `
+      <div class="card" style="grid-column:1/-1"><h3>各對口單位圓餅圖</h3>
+        <div class="pie-share"><div>${pieSVG(shareSlices, 160)}</div><div style="flex:1;min-width:220px"><div class="muted" style="margin-bottom:6px">各對口單位 ICD 數量佔比（外部 ICD，共 ${shareSlices.reduce((a, x) => a + x.n, 0)} 筆）</div>${pieLegend(shareSlices)}</div></div>
+        <div class="pie-head"><span class="muted" id="pie-note">${PIE_NOTE[S.pieMode]}</span>
+          <div class="seg" id="pie-mode" role="group" aria-label="圓餅圖分類方式">${Object.entries(PIE_MODES).map(([k, l]) => `<button type="button" class="btn small ${k === S.pieMode ? 'active' : ''}" data-mode="${k}">${l}</button>`).join('')}</div></div>
+        <div class="pie-grid" id="pie-grid">${pieTiles(S.pieMode)}</div></div>` : '';
+
   const revCnt = {}; all.forEach(i => { if (i.latest_revision != null) revCnt[i.latest_revision] = (revCnt[i.latest_revision] || 0) + 1; });
   const ri = k => { const x = REV_ORDER.indexOf(k); return x < 0 ? 99 : x; };
   const revKeys = Object.keys(revCnt).sort((a, b) => ri(a) - ri(b) || a.localeCompare(b));
@@ -257,10 +320,17 @@ function viewDashboard(el) {
       <div class="card"><h3>各類別狀態分佈</h3>${bars}<div style="margin-top:10px">${legend}</div></div>
       <div class="card"><h3>最新進版版次分佈</h3>${revBars}</div>
       <div class="card" style="grid-column:1/-1"><h3>外部界面矩陣（O 開啟 · I 進行中 · S 已簽署 · P 待啟動 · F 凍結）</h3>
-        <div class="tbl-wrap"><table class="mx"><thead><tr><th rowspan="2">對口單位</th><th colspan="5" style="border-left:2px solid #dde3ea">${esc(ME)} 主導</th><th colspan="5" style="border-left:2px solid #dde3ea">對方主導（${esc(ME)} 從屬）</th><th rowspan="2" style="border-left:2px solid #dde3ea">合計</th></tr><tr>${mxHead}${mxHead}</tr></thead><tbody>${mxRows}</tbody></table></div></div>
+        <div class="tbl-wrap"><table class="mx"><thead><tr><th rowspan="2">對口單位</th><th colspan="5" style="border-left:2px solid #dde3ea">${esc(ME)} 主導</th><th colspan="5" style="border-left:2px solid #dde3ea">對方主導（${esc(ME)} 從屬）</th><th rowspan="2" style="border-left:2px solid #dde3ea">合計</th></tr><tr>${mxHead}${mxHead}</tr></thead><tbody>${mxRows}</tbody></table></div></div>${piesCard}
       <div class="card"><h3>逾期待處理（${overdue.length}）</h3>${list(overdue, i => { const d = dueOf(i); return d ? `${d}<br><span class="tag warn">逾 ${daysBetween(today, parseD(d))} 天</span>` : '<span class="tag warn">逾期回覆</span>'; }, '目前沒有逾期項目 🎉')}</div>
       <div class="card"><h3>90 天內預計完成（${soon.length}）</h3>${list(soon, i => `${i.expected_end}<br><span class="tag">剩 ${daysBetween(parseD(i.expected_end), today)} 天</span>`, '未來 90 天沒有預計完成項目')}</div>
     </div>`;
+  $('#pie-mode')?.addEventListener('click', e => {
+    const b = e.target.closest('button[data-mode]'); if (!b) return;
+    S.pieMode = b.dataset.mode;
+    $$('#pie-mode button').forEach(x => x.classList.toggle('active', x === b));
+    $('#pie-note').textContent = PIE_NOTE[S.pieMode];
+    $('#pie-grid').innerHTML = pieTiles(S.pieMode);
+  });
 }
 
 // ---------- ICD 列表 ----------
