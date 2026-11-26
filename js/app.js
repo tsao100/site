@@ -64,7 +64,7 @@ const errMsg = e => (e && (e.message || e.error_description)) || String(e);
 
 // ---------- 狀態 ----------
 const S = { sb: null, user: null, profile: null, recovery: false, loadedFor: null,
-  all: [], icds: [], revs: [], corr: [], codes: [], projects: [], project: null, filters: {}, sort: {}, pieMode: 'all' };
+  all: [], icds: [], revs: [], corr: [], codes: [], projects: [], project: null, filters: {}, sort: {}, pieSel: ['status', 'rev', 'reply'] };
 const canEdit = () => ['editor', 'admin'].includes(S.profile?.role);
 const isAdmin = () => S.profile?.role === 'admin';
 
@@ -271,8 +271,7 @@ function viewDashboard(el) {
   const pRows = Object.fromEntries(partners.map(p => [p, all.filter(i => i.category !== 'internal' && partnerOf(i) === p)]));
   const pOrder = [...partners].sort((a, b) => pRows[b].length - pRows[a].length || a.localeCompare(b));
   const shareSlices = pOrder.map((p, k) => ({ label: p, n: pRows[p].length, color: PIE_PALETTE[k % PIE_PALETTE.length] }));
-  const PIE_MODES = { all: '並列', status: '狀態', rev: '版次', reply: '回覆情形', dir: '主導／從屬' };
-  const PIE_NOTE = { status: '各對口單位狀態分佈（主導＋從屬合計）', dir: `各對口單位主導／從屬比例（${ME} 主導 vs 對方主導）`, rev: '各對口單位最新進版版次分佈（主導＋從屬合計）', reply: '各對口單位回覆情形分佈（主導＋從屬合計）', all: '各對口單位：狀態／版次／回覆情形並列（主導＋從屬合計）' };
+  const PIE_MODES = { status: '狀態', rev: '最新版次', reply: '回覆情形', dir: '主導／從屬' };
   const REPLY_COLOR = { '已回覆': '#15803d', '未回覆': '#d97706', '逾期回覆': '#c62828', '無版本': '#9ca3af' };
   const NA_COLOR = '#d5dbe2';
   const extAll = all.filter(i => i.category !== 'internal');
@@ -300,19 +299,25 @@ function viewDashboard(el) {
     if (other) sl.push({ label: '未設定', n: other, color: NA_COLOR });
     return sl;
   };
-  const pieTiles = mode => pOrder.map(p => {
-    const rows = pRows[p];
-    if (mode === 'all') return `<div class="pie-card"><h4><span>${esc(p)}</span><span class="muted">${rows.length} 筆</span></h4><div class="pie-multi">${[['status', '狀態'], ['rev', '最新版次'], ['reply', '回覆情形']].map(([m, t]) => { const sl = tileSlices(rows, m); return `<div class="pie-sub"><div class="pie-cap">${t}</div>${pieSVG(sl, 104)}${pieLegend(sl)}</div>`; }).join('')}</div></div>`;
-    const sl = tileSlices(rows, mode);
-    return `<div class="pie-card"><h4><span>${esc(p)}</span><span class="muted">${rows.length} 筆</span></h4>${pieSVG(sl)}${pieLegend(sl)}</div>`;
-  }).join('');
-  if (!PIE_MODES[S.pieMode]) S.pieMode = 'all';
+  const pieSel = () => Object.keys(PIE_MODES).filter(k => (S.pieSel || []).includes(k));   // 依固定順序
+  const pieTiles = () => {
+    const sel = pieSel();
+    if (!sel.length) return '<p class="muted">請至少勾選一項圓餅圖。</p>';
+    const sz = sel.length > 2 ? 96 : 104;
+    return pOrder.map(p => {
+      const rows = pRows[p];
+      return `<div class="pie-card"><h4><span>${esc(p)}</span><span class="muted">${rows.length} 筆</span></h4><div class="pie-multi">${sel.map(m => { const sl = tileSlices(rows, m); return `<div class="pie-sub"><div class="pie-cap">${PIE_MODES[m]}</div>${pieSVG(sl, sz)}${pieLegend(sl)}</div>`; }).join('')}</div></div>`;
+    }).join('');
+  };
+  // 每張卡片寬度依勾選數量調整，勾越多越寬（窄螢幕自動換成單欄）
+  const pieGridStyle = () => `grid-template-columns:repeat(auto-fill,minmax(min(100%,${Math.max(1, pieSel().length) * 190}px),1fr))`;
+  if (!Array.isArray(S.pieSel)) S.pieSel = ['status', 'rev', 'reply'];
   const piesCard = pOrder.length ? `
       <div class="card" style="grid-column:1/-1"><h3>各對口單位圓餅圖</h3>
         <div class="pie-share"><div>${pieSVG(shareSlices, 160)}</div><div style="flex:1;min-width:220px"><div class="muted" style="margin-bottom:6px">各對口單位 ICD 數量佔比（外部 ICD，共 ${shareSlices.reduce((a, x) => a + x.n, 0)} 筆）</div>${pieLegend(shareSlices)}</div></div>
-        <div class="pie-head"><span class="muted" id="pie-note">${PIE_NOTE[S.pieMode]}</span>
-          <div class="seg" id="pie-mode" role="group" aria-label="圓餅圖分類方式">${Object.entries(PIE_MODES).map(([k, l]) => `<button type="button" class="btn small ${k === S.pieMode ? 'active' : ''}" data-mode="${k}">${l}</button>`).join('')}</div></div>
-        <div class="pie-grid ${S.pieMode === 'all' ? 'wide' : ''}" id="pie-grid">${pieTiles(S.pieMode)}</div></div>` : '';
+        <div class="pie-head"><span class="muted">各對口單位圓餅圖（外部 ICD，主導＋從屬合計）— 勾選要並列顯示的項目：</span>
+          <div class="pie-checks" id="pie-checks">${Object.entries(PIE_MODES).map(([k, l]) => `<label class="chk"><input type="checkbox" data-mode="${k}" ${S.pieSel.includes(k) ? 'checked' : ''}>${l}</label>`).join('')}</div></div>
+        <div class="pie-grid" id="pie-grid" style="${pieGridStyle()}">${pieTiles()}</div></div>` : '';
 
   const revCnt = {}; all.forEach(i => { if (i.latest_revision != null) revCnt[i.latest_revision] = (revCnt[i.latest_revision] || 0) + 1; });
   const ri = k => { const x = REV_ORDER.indexOf(k); return x < 0 ? 99 : x; };
@@ -333,13 +338,10 @@ function viewDashboard(el) {
       <div class="card"><h3>逾期待處理（${overdue.length}）</h3>${list(overdue, i => { const d = dueOf(i); return d ? `${d}<br><span class="tag warn">逾 ${daysBetween(today, parseD(d))} 天</span>` : '<span class="tag warn">逾期回覆</span>'; }, '目前沒有逾期項目 🎉')}</div>
       <div class="card"><h3>90 天內預計完成（${soon.length}）</h3>${list(soon, i => `${i.expected_end}<br><span class="tag">剩 ${daysBetween(parseD(i.expected_end), today)} 天</span>`, '未來 90 天沒有預計完成項目')}</div>
     </div>`;
-  $('#pie-mode')?.addEventListener('click', e => {
-    const b = e.target.closest('button[data-mode]'); if (!b) return;
-    S.pieMode = b.dataset.mode;
-    $$('#pie-mode button').forEach(x => x.classList.toggle('active', x === b));
-    $('#pie-note').textContent = PIE_NOTE[S.pieMode];
-    $('#pie-grid').classList.toggle('wide', S.pieMode === 'all');
-    $('#pie-grid').innerHTML = pieTiles(S.pieMode);
+  $('#pie-checks')?.addEventListener('change', () => {
+    S.pieSel = $$('#pie-checks input:checked').map(x => x.dataset.mode);
+    $('#pie-grid').style.cssText = pieGridStyle();
+    $('#pie-grid').innerHTML = pieTiles();
   });
 }
 
