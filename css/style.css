@@ -82,22 +82,21 @@ td.num,th.num{text-align:center}.code{font-family:ui-monospace,Menlo,Consolas,mo
 .pie-legend i{width:10px;height:10px;border-radius:2px;background:var(--c)}
 .pie-legend .p{color:var(--mut);text-align:right}
 .pie{flex:none}
-@media print{.pie-card{break-inside:avoid}}
 .pie-head{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin:16px 0 8px}
-@media print{.pie-multi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;width:100%}
-.pie-sub{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0}
-.pie-cap{font-size:12px;font-weight:600;color:var(--mut);align-self:flex-start}
+.pie-ctrl{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
 .pie-checks{display:flex;flex-wrap:wrap;gap:6px}
+.pie-checks>.muted{font-size:12px;align-self:center}
+.pie-checks.off{opacity:.45}.pie-checks.off .chk{cursor:not-allowed}
 .chk{flex-direction:row;align-items:center;gap:6px;font-size:13px;font-weight:500;color:var(--ink);padding:5px 12px;border:1px solid var(--line);border-radius:99px;cursor:pointer;background:#fff;user-select:none}
 .chk input{width:auto;margin:0;accent-color:var(--pri)}
 .chk:has(input:checked){border-color:var(--pri);background:#eaf2fb;color:var(--pri-d);font-weight:600}
-@media print{.pie-checks{display:none}}
-.pie-ctrl{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
-.pie-checks>.muted{font-size:12px;align-self:center}
+/* 單位內多個圓餅：預設左右並列（超出寬度自動換行）；.stack 為上下並列 */
+.pie-multi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;width:100%}
+.pie-sub{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0}
+.pie-cap{font-size:12px;font-weight:600;color:var(--mut);align-self:flex-start}
 .pie-multi.stack{grid-template-columns:1fr}
 .pie-multi.stack .pie-sub{display:grid;grid-template-columns:auto 1fr;column-gap:14px;row-gap:4px;align-items:center;justify-items:stretch}
 .pie-multi.stack .pie-cap{grid-column:1/-1}
 .pie-multi.stack .pie-sub svg{justify-self:center}
 .pie-multi.stack .pie-sub+.pie-sub{border-top:1px dashed var(--line);padding-top:10px}
-@media print{#pie-dir{display:none}}
-.pie-checks.off{opacity:.45}.pie-checks.off .chk{cursor:not-allowed}
+@media print{.pie-card{break-inside:avoid}.pie-checks{display:none}}
