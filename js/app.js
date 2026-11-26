@@ -300,17 +300,18 @@ function viewDashboard(el) {
     return sl;
   };
   const pieSel = () => Object.keys(PIE_MODES).filter(k => (S.pieSel || []).includes(k));   // 依固定順序
+  const stacked = () => S.pieDir === 'col' && pieSel().length >= 2;   // 上下並列僅在同一單位內有 2 個以上圓餅時才有意義
   const pieTiles = () => {
     const sel = pieSel();
     if (!sel.length) return '<p class="muted">請至少勾選一項圓餅圖。</p>';
     const sz = sel.length > 2 ? 96 : 104;
     return pOrder.map(p => {
       const rows = pRows[p];
-      return `<div class="pie-card"><h4><span>${esc(p)}</span><span class="muted">${rows.length} 筆</span></h4><div class="pie-multi ${S.pieDir === 'col' ? 'stack' : ''}">${sel.map(m => { const sl = tileSlices(rows, m); return `<div class="pie-sub"><div class="pie-cap">${PIE_MODES[m]}</div>${pieSVG(sl, sz)}${pieLegend(sl)}</div>`; }).join('')}</div></div>`;
+      return `<div class="pie-card"><h4><span>${esc(p)}</span><span class="muted">${rows.length} 筆</span></h4><div class="pie-multi ${stacked() ? 'stack' : ''}">${sel.map(m => { const sl = tileSlices(rows, m); return `<div class="pie-sub"><div class="pie-cap">${PIE_MODES[m]}</div>${pieSVG(sl, sz)}${pieLegend(sl)}</div>`; }).join('')}</div></div>`;
     }).join('');
   };
   // 每張卡片寬度依勾選數量調整，勾越多越寬（窄螢幕自動換成單欄）
-  const pieGridStyle = () => `grid-template-columns:repeat(auto-fill,minmax(min(100%,${S.pieDir === 'col' ? 340 : Math.max(1, pieSel().length) * 190}px),1fr))`;
+  const pieGridStyle = () => `grid-template-columns:repeat(auto-fill,minmax(min(100%,${stacked() ? 340 : Math.max(1, pieSel().length) * 190}px),1fr))`;
   if (!Array.isArray(S.pieSel)) S.pieSel = ['status', 'rev', 'reply'];
   if (S.pieDir !== 'col') S.pieDir = 'row';
   const piesCard = pOrder.length ? `
@@ -318,7 +319,7 @@ function viewDashboard(el) {
         <div class="pie-share"><div>${pieSVG(shareSlices, 160)}</div><div style="flex:1;min-width:220px"><div class="muted" style="margin-bottom:6px">各對口單位 ICD 數量佔比（外部 ICD，共 ${shareSlices.reduce((a, x) => a + x.n, 0)} 筆）</div>${pieLegend(shareSlices)}</div></div>
         <div class="pie-head"><span class="muted">各對口單位圓餅圖（外部 ICD，主導＋從屬合計）— 勾選要並列顯示的項目：</span>
           <div class="pie-ctrl"><div class="pie-checks" id="pie-checks">${Object.entries(PIE_MODES).map(([k, l]) => `<label class="chk"><input type="checkbox" data-mode="${k}" ${S.pieSel.includes(k) ? 'checked' : ''}>${l}</label>`).join('')}</div>
-          <div class="pie-checks" id="pie-dir" role="radiogroup" aria-label="並列方式"><span class="muted">並列方式：</span>${[['row', '左右並列'], ['col', '上下並列']].map(([k, l]) => `<label class="chk"><input type="radio" name="pie-dir" value="${k}" ${S.pieDir === k ? 'checked' : ''}>${l}</label>`).join('')}</div></div></div>
+          <div class="pie-checks ${pieSel().length < 2 ? 'off' : ''}" id="pie-dir" role="radiogroup" aria-label="單位內圓餅並列方式"><span class="muted">單位內並列方式（2 個以上）：</span>${[['row', '左右並列'], ['col', '上下並列']].map(([k, l]) => `<label class="chk"><input type="radio" name="pie-dir" value="${k}" ${S.pieDir === k ? 'checked' : ''} ${pieSel().length < 2 ? 'disabled' : ''}>${l}</label>`).join('')}</div></div></div>
         <div class="pie-grid" id="pie-grid" style="${pieGridStyle()}">${pieTiles()}</div></div>` : '';
 
   const revCnt = {}; all.forEach(i => { if (i.latest_revision != null) revCnt[i.latest_revision] = (revCnt[i.latest_revision] || 0) + 1; });
@@ -340,7 +341,11 @@ function viewDashboard(el) {
       <div class="card"><h3>逾期待處理（${overdue.length}）</h3>${list(overdue, i => { const d = dueOf(i); return d ? `${d}<br><span class="tag warn">逾 ${daysBetween(today, parseD(d))} 天</span>` : '<span class="tag warn">逾期回覆</span>'; }, '目前沒有逾期項目 🎉')}</div>
       <div class="card"><h3>90 天內預計完成（${soon.length}）</h3>${list(soon, i => `${i.expected_end}<br><span class="tag">剩 ${daysBetween(parseD(i.expected_end), today)} 天</span>`, '未來 90 天沒有預計完成項目')}</div>
     </div>`;
-  const redrawPies = () => { $('#pie-grid').style.cssText = pieGridStyle(); $('#pie-grid').innerHTML = pieTiles(); };
+  const redrawPies = () => {
+    const multi = pieSel().length >= 2;
+    $('#pie-dir').classList.toggle('off', !multi); $$('#pie-dir input').forEach(x => { x.disabled = !multi; });
+    $('#pie-grid').style.cssText = pieGridStyle(); $('#pie-grid').innerHTML = pieTiles();
+  };
   $('#pie-checks')?.addEventListener('change', () => { S.pieSel = $$('#pie-checks input:checked').map(x => x.dataset.mode); redrawPies(); });
   $('#pie-dir')?.addEventListener('change', e => { if (e.target.name === 'pie-dir') { S.pieDir = e.target.value === 'col' ? 'col' : 'row'; redrawPies(); } });
 }
