@@ -6,7 +6,7 @@
 const STATUSES = ['OPEN', 'IN PROGRESS', 'WAIT SIGN', 'SIGNED', 'FROZEN', 'PENDING'];
 const STATUS_COLOR = { 'OPEN': '#64748b', 'IN PROGRESS': '#d97706', 'WAIT SIGN': '#7c3aed', 'SIGNED': '#15803d', 'FROZEN': '#0e7490', 'PENDING': '#9ca3af' };
 const CATS = { ext_led: '外部 ICD · 本標主導', ext_party: '外部 ICD · 本標從屬', internal: '內部 ICD' };
-const ROLES = { pending: '待核准', viewer: '唯讀', editor: '編輯者', admin: '管理者' };
+const ROLES = { disabled: '停用', viewer: '唯讀', editor: '編輯者', admin: '管理者' };
 const REV_ORDER = ['A', 'B', 'C', 'D', 'E', 'F', '0', '0A'];
 let ME = 'YT1'; // 本標代碼（隨目前專案的 my_code 變動）
 const ACTIVE = s => s === 'OPEN' || s === 'IN PROGRESS' || s === 'WAIT SIGN';
@@ -90,10 +90,15 @@ function boot() {
   });
 }
 
+// 信件（註冊確認、重設密碼）連結要導回的網址：優先用 config.js 的 SITE_URL（正式網址），
+// 未設定才用目前網址。此網址必須同時列在 Supabase → Authentication → URL Configuration 的 Redirect URLs，否則會被改導回 Site URL（預設 localhost:3000）。
+function siteUrl() { return String(window.APP_CONFIG.SITE_URL || '').trim() || (location.origin + location.pathname); }
+
 async function handleSession(sess) {
   if (S.recovery) return;
   if (!sess) { S.user = null; S.profile = null; S.loadedFor = null; S.all = []; S.icds = []; S.revs = []; S.corr = []; S.projects = []; S.project = null; showOnly('auth-view'); return; }
   if (S.loadedFor === sess.user.id) return;
+  if (!sess.user.email_confirmed_at) { setMsg('#auth-msg', '信箱尚未驗證：請先至信箱點擊驗證連結，完成後再登入。', 'err'); show('link-resend', true); await S.sb.auth.signOut(); return; }
   S.user = sess.user;
   const { data: p, error } = await S.sb.from('profiles').select('*').eq('id', S.user.id).maybeSingle();
   if (error || !p) { setMsg('#auth-msg', '讀取使用者資料失敗：' + errMsg(error || '找不到 profile（請確認已執行 schema.sql）'), 'err'); await S.sb.auth.signOut(); return; }
@@ -105,6 +110,18 @@ async function handleSession(sess) {
   show('nav-admin', isAdmin());
   showOnly('app');
   route();
+  showReadonlyNotice();
+}
+
+// 唯讀帳號：頁面上方提示，並列出管理者信箱方便申請編輯權限
+async function showReadonlyNotice() {
+  const el = $('#ro-banner');
+  if (S.profile.role !== 'viewer') { el.classList.add('hidden'); return; }
+  const { data } = await S.sb.rpc('admin_contacts');
+  const mails = (data || []).map(c => c.email).filter(Boolean);
+  const subject = encodeURIComponent('申請界面管理系統編輯權限'), body = encodeURIComponent(`我的帳號：${S.profile.email}\n申請角色：編輯者`);
+  el.innerHTML = `目前是<b>唯讀</b>帳號，可瀏覽所有資料但無法編輯。如需編輯權限，請聯繫管理者${mails.length ? '：' + mails.map(m => `<a href="mailto:${esc(m)}?subject=${subject}&body=${body}">${esc(m)}</a>`).join('、') : ''}；權限調整後請重新整理頁面。`;
+  el.classList.remove('hidden');
 }
 
 function setMsg(sel, text, cls = '') { const el = $(sel); el.textContent = text; el.className = 'msg ' + cls; }
@@ -112,11 +129,12 @@ function setMsg(sel, text, cls = '') { const el = $(sel); el.textContent = text;
 let authMode = 'login';
 function setAuthMode(m) {
   authMode = m;
-  $('#auth-title').textContent = { login: '登入', register: '申請帳號', forgot: '重設密碼' }[m];
-  $('#auth-submit').textContent = { login: '登入', register: '送出申請', forgot: '寄送重設連結' }[m];
+  $('#auth-title').textContent = { login: '登入', register: '註冊帳號', forgot: '重設密碼' }[m];
+  $('#auth-submit').textContent = { login: '登入', register: '註冊', forgot: '寄送重設連結' }[m];
   show('auth-pw-wrap', m !== 'forgot'); $('#auth-pw').required = m !== 'forgot';
   $('#auth-pw').autocomplete = m === 'register' ? 'new-password' : 'current-password';
-  $('#link-register').textContent = m === 'register' ? '返回登入' : '申請帳號';
+  $('#link-register').textContent = m === 'register' ? '返回登入' : '註冊帳號';
+  show('auth-hint', m === 'register'); show('link-resend', false);
   setMsg('#auth-msg', '');
 }
 
@@ -129,20 +147,29 @@ $('#auth-form').addEventListener('submit', async e => {
       const { error } = await S.sb.auth.signInWithPassword({ email, password: pw });
       if (error) throw error; setMsg('#auth-msg', '');
     } else if (authMode === 'register') {
-      const { data, error } = await S.sb.auth.signUp({ email, password: pw, options: { emailRedirectTo: location.origin + location.pathname } });
+      const { data, error } = await S.sb.auth.signUp({ email, password: pw, options: { emailRedirectTo: siteUrl() } });
       if (error) throw error;
-      setMsg('#auth-msg', data.session ? '' : '申請已送出。若系統要求信箱驗證請先完成驗證；之後需由管理者核准才能使用。', 'ok');
+      if (data.user && Array.isArray(data.user.identities) && !data.user.identities.length) { setMsg('#auth-msg', '這個信箱已註冊過，請直接登入；若忘記密碼請使用「忘記密碼」。', 'err'); }
+      else setMsg('#auth-msg', data.session ? '' : '註冊完成！驗證信已寄到你的信箱，請點擊信中的連結完成驗證，之後即可登入並以唯讀身分使用。如需編輯權限，請聯繫管理者。', 'ok');
     } else {
-      const { error } = await S.sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+      const { error } = await S.sb.auth.resetPasswordForEmail(email, { redirectTo: siteUrl() });
       if (error) throw error; setMsg('#auth-msg', '若此信箱已註冊，將收到重設密碼信件。', 'ok');
     }
   } catch (err) {
     const m = errMsg(err);
-    setMsg('#auth-msg', /Invalid login/i.test(m) ? '帳號或密碼錯誤' : /not confirmed/i.test(m) ? '信箱尚未驗證，請先至信箱點擊驗證連結' : m, 'err');
+    const unconfirmed = /not confirmed/i.test(m);
+    show('link-resend', unconfirmed);
+    setMsg('#auth-msg', /Invalid login/i.test(m) ? '帳號或密碼錯誤' : unconfirmed ? '信箱尚未驗證，請先至信箱點擊驗證連結（沒收到可按下方「重寄驗證信」）' : m, 'err');
   } finally { btn.disabled = false; }
 });
 $('#link-register').addEventListener('click', e => { e.preventDefault(); setAuthMode(authMode === 'register' ? 'login' : 'register'); });
 $('#link-forgot').addEventListener('click', e => { e.preventDefault(); setAuthMode('forgot'); });
+$('#link-resend').addEventListener('click', async e => {
+  e.preventDefault(); if (!S.sb) return;
+  const email = $('#auth-email').value.trim(); if (!email) return setMsg('#auth-msg', '請先輸入電子郵件', 'err');
+  const { error } = await S.sb.auth.resend({ type: 'signup', email, options: { emailRedirectTo: siteUrl() } });
+  setMsg('#auth-msg', error ? errMsg(error) : '驗證信已重新寄出，請至信箱查收（也請檢查垃圾郵件匣）。', error ? 'err' : 'ok');
+});
 $('#recovery-form').addEventListener('submit', async e => {
   e.preventDefault();
   const { error } = await S.sb.auth.updateUser({ password: $('#recovery-pw').value });
@@ -153,6 +180,13 @@ $('#recovery-form').addEventListener('submit', async e => {
 const logout = async () => { await S.sb.auth.signOut(); location.hash = ''; };
 $('#btn-logout').addEventListener('click', logout);
 $('#pending-logout').addEventListener('click', logout);
+$('#pending-recheck').addEventListener('click', async () => {
+  const btn = $('#pending-recheck'); btn.disabled = true; setMsg('#pending-msg', '檢查中…');
+  const { data } = await S.sb.auth.getSession();
+  S.loadedFor = null; await handleSession(data.session);
+  if (!$('#pending-view').classList.contains('hidden')) setMsg('#pending-msg', '帳號仍為停用狀態，請聯繫管理者。', 'err');
+  btn.disabled = false;
+});
 
 // ---------- 資料存取 ----------
 async function fetchAll(table, orders) {
@@ -431,14 +465,18 @@ async function viewAdmin(el) {
   el.innerHTML = '<p class="muted">載入中…</p>';
   const { data, error } = await S.sb.from('profiles').select('*').order('created_at');
   if (error) { el.innerHTML = `<p class="msg err">${esc(errMsg(error))}</p>`; return; }
-  el.innerHTML = `<p class="muted">新註冊者預設為「待核准」，無法讀取任何資料；請在此指派角色。唯讀＝只能瀏覽；編輯者＝可新增/修改；管理者＝可刪除 ICD 並管理使用者。</p>
-  <div class="tbl-wrap"><table><thead><tr><th>電子郵件</th><th>註冊時間</th><th>角色</th></tr></thead><tbody>${data.map(p => `<tr><td>${esc(p.email)}</td><td>${esc((p.created_at || '').slice(0, 10))}</td><td>
-    <select data-uid="${p.id}" ${p.id === S.user.id ? 'disabled title="不可變更自己的角色"' : ''} style="max-width:160px">${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${p.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table></div>`;
+  const roleOpts = cur => Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${cur === k ? 'selected' : ''}>${v}</option>`).join('');
+  const day = p => esc((p.created_at || '').slice(0, 10));
+  el.innerHTML = `<p class="muted">新使用者完成 Email 驗證後，預設為「唯讀」，不需核準即可瀏覽所有資料；需要編輯權限的人會來聯繫你，請在此把角色改為「編輯者」。唯讀＝只能瀏覽；編輯者＝可新增/修改；管理者＝可刪除 ICD 並管理使用者；停用＝封鎖該帳號，無法讀取任何資料。角色調整後，對方重新整理頁面即生效。</p>
+  <div class="card"><h3>使用者（${data.length}）</h3><div class="tbl-wrap"><table><thead><tr><th>電子郵件</th><th>註冊時間</th><th>角色</th></tr></thead><tbody>${data.map(p => `<tr><td>${esc(p.email)}</td><td>${day(p)}</td><td>
+    <select data-uid="${p.id}" ${p.id === S.user.id ? 'disabled title="不可變更自己的角色"' : ''} style="max-width:160px">${roleOpts(p.role)}</select></td></tr>`).join('')}</tbody></table></div></div>`;
   el.onchange = async e => {
     const sel = e.target.closest('select[data-uid]'); if (!sel) return;
     const { error: er } = await S.sb.from('profiles').update({ role: sel.value }).eq('id', sel.dataset.uid);
-    er ? toast('更新失敗：' + errMsg(er), true) : toast('角色已更新');
+    if (er) { toast('更新失敗：' + errMsg(er), true); viewAdmin(el); return; }
+    toast('角色已更新');
   };
+  el.onclick = null;
 }
 
 // ---------- 詳細資料 Drawer ----------

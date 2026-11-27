@@ -14,25 +14,29 @@
   <form id="auth-form" class="auth-card" autocomplete="on">
     <div class="brand"><span class="logo">ICD</span><div><h1>界面管理系統</h1><p>Interface Control Document Management</p></div></div>
     <h2 id="auth-title">登入</h2>
+    <p id="auth-hint" class="muted hidden" style="font-size:13px;margin:0">註冊後請至信箱點擊驗證連結；驗證完成即可登入，並以<b>唯讀</b>身分使用（不需管理者核準）。如需編輯權限，請聯繫管理者。</p>
     <label>電子郵件<input id="auth-email" type="email" required autocomplete="username"></label>
     <label id="auth-pw-wrap">密碼<input id="auth-pw" type="password" minlength="8" required autocomplete="current-password"></label>
     <div id="auth-msg" class="msg" role="alert"></div>
     <button id="auth-submit" class="btn primary block" type="submit">登入</button>
     <div class="auth-links">
-      <a href="#" id="link-register">申請帳號</a>
+      <a href="#" id="link-register">註冊帳號</a>
       <a href="#" id="link-forgot">忘記密碼</a>
+      <a href="#" id="link-resend" class="hidden">重寄驗證信</a>
     </div>
   </form>
 </main>
 
-<!-- 待核准 / 設定新密碼 -->
+<!-- 帳號已停用 / 設定新密碼 -->
 <main id="pending-view" class="auth hidden">
   <div class="auth-card">
     <div class="brand"><span class="logo">ICD</span><div><h1>界面管理系統</h1></div></div>
-    <h2>帳號待核准</h2>
-    <p>你的帳號已建立，但尚未獲得使用權限。請聯絡系統管理者核准後，重新整理頁面。</p>
+    <h2>帳號已停用</h2>
+    <p>這個帳號已被管理者停用，目前無法使用系統。如有疑問，請聯繫系統管理者；恢復後按下「重新檢查」即可進入。</p>
     <p class="muted" id="pending-email"></p>
-    <button class="btn block" id="pending-logout">登出</button>
+    <p class="msg" id="pending-msg"></p>
+    <button class="btn primary block" id="pending-recheck">重新檢查</button>
+    <button class="btn block" id="pending-logout" style="margin-top:8px">登出</button>
   </div>
 </main>
 <main id="recovery-view" class="auth hidden">
@@ -44,7 +48,7 @@
   </form>
 </main>
 
-<!-- 主應用（登入且已核准後才會顯示） -->
+<!-- 主應用（登入且信箱已驗證後才會顯示） -->
 <div id="app" class="app hidden">
   <aside class="side">
     <div class="brand"><span class="logo">ICD</span><div><h1>界面管理系統</h1><p id="brand-sub"></p></div></div>
@@ -64,6 +68,7 @@
   </aside>
   <section class="main">
     <header class="topbar"><button class="btn small menu-btn" id="btn-menu">☰</button><h2 id="page-title"></h2><div id="page-actions"></div></header>
+    <div id="ro-banner" class="banner hidden" role="status"></div>
     <div id="view" class="view"></div>
   </section>
 </div>

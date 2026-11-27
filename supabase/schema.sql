@@ -5,22 +5,23 @@
 -- ============================================================
 
 -- ---------- 使用者與角色 ----------
--- role: pending(待核准，無任何資料權限) / viewer(唯讀) / editor(可編輯) / admin(管理者)
+-- role: viewer(唯讀；新註冊者 Email 驗證完成後的預設角色，免管理者核準) / editor(可編輯) / admin(管理者)
+--       disabled(停用；管理者可封鎖個別帳號，無任何資料權限)
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text,
   display_name text,
-  role text not null default 'pending' check (role in ('pending','viewer','editor','admin')),
+  role text not null default 'viewer' check (role in ('disabled','viewer','editor','admin')),
   created_at timestamptz not null default now()
 );
 
--- 新使用者註冊時自動建立 profile；第一位註冊者自動成為 admin
+-- 新使用者註冊時自動建立 profile（預設唯讀）；第一位註冊者自動成為 admin
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
   insert into public.profiles(id, email, display_name, role)
   values (new.id, new.email, split_part(new.email,'@',1),
-          case when not exists (select 1 from public.profiles) then 'admin' else 'pending' end);
+          case when not exists (select 1 from public.profiles) then 'admin' else 'viewer' end);
   return new;
 end $$;
 
@@ -28,9 +29,23 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();
 
+-- 目前使用者的角色。信箱尚未完成驗證者一律視為 'none'（讀不到任何資料），
+-- 不論 Supabase 的「Confirm email」設定為何，都由資料庫把關。
 create or replace function public.app_role()
 returns text language sql stable security definer set search_path = public as $$
-  select coalesce((select role from public.profiles where id = auth.uid()), 'none')
+  select coalesce((
+    select p.role from public.profiles p
+    join auth.users u on u.id = p.id
+    where p.id = auth.uid() and u.email_confirmed_at is not null
+  ), 'none')
+$$;
+
+-- 唯讀使用者要申請編輯權限時，需要知道該聯繫誰：只回傳管理者的 email，且僅限已驗證的使用者呼叫。
+create or replace function public.admin_contacts()
+returns table(email text) language sql stable security definer set search_path = public as $$
+  select p.email from public.profiles p
+  where p.role = 'admin' and public.app_role() in ('viewer','editor','admin')
+  order by p.created_at
 $$;
 
 -- ---------- 專案 ----------
@@ -189,10 +204,11 @@ alter table public.icd_revisions     enable row level security;
 alter table public.icd_correspondence enable row level security;
 alter table public.icd_audit         enable row level security;
 
--- profiles：只有已核准使用者可看名單；僅 admin 可修改角色/刪除
+-- profiles：一般使用者只能看自己的資料；管理者可看全部名單、修改角色/刪除
+-- （開放註冊後不再讓所有人看到使用者名單，避免洩漏他人 email）
 drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles for select to authenticated
-  using (id = auth.uid() or public.app_role() in ('viewer','editor','admin'));
+  using (id = auth.uid() or public.app_role() = 'admin');
 drop policy if exists profiles_update on public.profiles;
 create policy profiles_update on public.profiles for update to authenticated
   using (public.app_role() = 'admin') with check (public.app_role() = 'admin');
@@ -234,6 +250,7 @@ create policy icd_audit_select on public.icd_audit for select to authenticated
 revoke all on all tables in schema public from anon;
 revoke all on all functions in schema public from anon;
 grant execute on function public.app_role() to authenticated;
+grant execute on function public.admin_contacts() to authenticated;
 
 -- 明確授權給登入使用者（部分專案不會自動授權；實際存取仍由 RLS 控管）
 grant usage on schema public to authenticated;
